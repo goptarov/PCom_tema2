@@ -94,7 +94,6 @@ int setup_connection(uint32_t ip, uint16_t port)
     timerfd_settime(timer_fds[fdmax].fd, 0, &spec, NULL);    
     fdmax++;
 
-
     pthread_mutex_init(&con->con_lock, NULL);
     cons.insert({conn_id, con});
 

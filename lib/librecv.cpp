@@ -7,6 +7,7 @@
 #include "protocol.h"
 #include <poll.h>
 #include <cassert>
+#include <cstring>
 #include <sys/timerfd.h>
 
 using namespace std;
@@ -110,6 +111,23 @@ void init_receiver(int recv_buffer_bytes)
     int ret;
 
     /* TODO: Create the connection socket and bind it to 8031 */
+    int listen_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (listen_sockfd == -1) {
+        DEBUG_PRINT("Couldn't create socket");
+        exit(-1);
+    }
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons(8031);
+
+    int bind_ret = bind(listen_sockfd, (struct sockaddr *)&addr, sizeof(addr));
+    if (bind_ret == -1) {
+        DEBUG_PRINT("Couldn't bind socket");
+        exit(-1);
+    }
 
     ret = pthread_create( &thread1, NULL, receiver_handler, NULL);
     assert(ret == 0);
