@@ -10,8 +10,7 @@
 #include <cstring>
 #include <sys/timerfd.h>
 
-using namespace std;
-
+int listen_sockfd;
 std::map<int, struct connection *> cons;
 
 struct pollfd data_fds[MAX_CONNECTIONS];
@@ -62,9 +61,14 @@ int wait4connect(uint32_t ip, uint16_t port)
 {
     /* TODO: Implement the Three Way Handshake on the receiver part. This blocks
      * until a connection is established. */
+    int ret = 0;
+    struct sockaddr_in client_addr;
+    socklen_t client_addr_len = sizeof(client_addr);
+    char buf[MAX_SEGMENT_SIZE];
 
     struct connection *con = (struct connection *)malloc(sizeof(struct connection));
-    int conn_id = 0;
+    static int next_conn_id = 0;
+    int conn_id = next_conn_id++;
 
     /* This can be used to set a timer on a socket, useful once we received a
      * SYN. You may want to disable by setting the time to 0 (tv_sec = 0,
@@ -79,6 +83,50 @@ int wait4connect(uint32_t ip, uint16_t port)
     /* Receive SYN on the connection socket. Create a new socket and bind it to
      * the chosen port. Send the data port number via SYN-ACK to the client */
     con->sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (con->sockfd == -1) {
+        DEBUG_PRINT("Couldn't create client socket");
+        exit(-1);
+    }
+
+    recvfrom(listen_sockfd, buf, sizeof(buf), 0, (struct sockaddr *)&client_addr, &client_addr_len);
+
+    struct sockaddr_in server_new_addr;
+    memset(&server_new_addr, 0, sizeof(struct sockaddr_in));
+    server_new_addr.sin_family = AF_INET;
+    server_new_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    do {
+        server_new_addr.sin_port = htons(1024 + rand() % 65411);
+        ret = bind(con->sockfd, (struct sockaddr *)&server_new_addr, sizeof(server_new_addr));
+    } while (ret == -1); //repeat if the port was already assigned
+
+    con->servaddr = client_addr;
+    con->conn_id = conn_id;
+
+    struct poli_synack synack;
+    synack.hdr.protocol_id = POLI_PROTOCOL_ID;
+    synack.hdr.conn_id = conn_id;
+    synack.hdr.type = SYNACK;
+    synack.hdr.ack_num = 0;
+    synack.hdr.recv_window = 0;
+    synack.assigned_port = server_new_addr.sin_port;
+
+    sendto(listen_sockfd, &synack, sizeof(synack), 0, (struct sockaddr *)&client_addr, client_addr_len);
+
+    while (1) {
+        sendto(listen_sockfd, &synack, sizeof(synack), 0, (struct sockaddr *)&client_addr, client_addr_len);
+
+        recvfrom(con->sockfd, buf, sizeof(buf), 0, NULL, NULL);
+
+        struct poli_tcp_ctrl_hdr *ack = (struct poli_tcp_ctrl_hdr *)buf;
+
+        if (ack->protocol_id == POLI_PROTOCOL_ID && ack->type == ACK) {
+            break;
+        }else {
+            //Recieved something else
+            DEBUG_PRINT("Received non-ack, resending syn+ack");
+        }
+    }
 
     /* Since we can have multiple connection, we want to know if data is available
        on the socket used by a given connection. We use POLL for this */
@@ -102,7 +150,7 @@ int wait4connect(uint32_t ip, uint16_t port)
 
     DEBUG_PRINT("Connection established!");
 
-    return 0;
+    return conn_id;
 }
 
 void init_receiver(int recv_buffer_bytes)
@@ -110,8 +158,8 @@ void init_receiver(int recv_buffer_bytes)
     pthread_t thread1;
     int ret;
 
-    /* TODO: Create the connection socket and bind it to 8031 */
-    int listen_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    /* TODO: Create the connection socket and bind it to 8032 */
+    listen_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (listen_sockfd == -1) {
         DEBUG_PRINT("Couldn't create socket");
         exit(-1);
@@ -121,7 +169,7 @@ void init_receiver(int recv_buffer_bytes)
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    addr.sin_port = htons(8031);
+    addr.sin_port = htons(8032);
 
     int bind_ret = bind(listen_sockfd, (struct sockaddr *)&addr, sizeof(addr));
     if (bind_ret == -1) {

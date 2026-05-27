@@ -86,6 +86,7 @@ int main(int argc, char *argv[])
 			char buf[64];
 			sprintf(buf, "file%d.out", i);	
 
+			//ce ar trebui sa reprezinte parametrii functiei?
 	    	conn_ids[i] = wait4connect(INADDR_ANY, htons(8032));
 	    	file_fd[i] = open(buf, O_CREAT|O_WRONLY|O_TRUNC, 0660);
 			assert(file_fd[i] > 0);
