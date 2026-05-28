@@ -17,7 +17,7 @@ LIBFLAGS=$(foreach TMP,$(LIBPATHS),-L$(TMP))
 # Set up the output file names for the different output types
 #BINARY=$(PROJECT)
 
-all: $(SOURCES) server client
+all:  $(SOURCES) server client
 
 #$(BINARY): $(OBJECTS)
 server: $(OBJECTS)

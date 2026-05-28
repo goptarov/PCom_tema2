@@ -33,7 +33,9 @@ int main(int argc, char *argv[])
 
     /* Connect to the server */
     struct in_addr addr;
-    inet_aton("172.16.0.100", &addr);
+    inet_aton("172.16.0.1", &addr);
+    //inet_aton("172.0.0.1", &addr); //why not test locally directly?
+    printf("Connecting to server...\n");
     int conn_id = setup_connection(addr.s_addr, htons(8032));
     printf("Connected to server\n");
 

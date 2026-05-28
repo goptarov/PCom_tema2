@@ -1,5 +1,7 @@
 #include <cstdint>
 
+#pragma once
+
 /* Values used for protocol ID and type. */
 #define POLI_PROTOCOL_ID 42
 

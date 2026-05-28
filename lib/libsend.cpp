@@ -4,8 +4,8 @@
 #include <cstdint>
 #include "lib.h"
 #include "utils.h"
-#include "protocol.h"
 #include <cassert>
+#include <cstring>
 #include <poll.h>
 #include <sys/timerfd.h>
 
@@ -25,6 +25,18 @@ int send_data(int conn_id, char *buffer, int len)
     pthread_mutex_lock(&cons[conn_id]->con_lock);
 
     /* We will write code here as to not have sync problems with sender_handler */
+    struct connection *con = cons[conn_id];
+
+    if (len > MAX_BUF_SIZE - con->send_buffer_len) {
+        memcpy(con->send_buffer + con->send_buffer_len, buffer, MAX_BUF_SIZE - con->send_buffer_len);
+        size = MAX_BUF_SIZE - con->send_buffer_len;
+        con->send_buffer_len = MAX_BUF_SIZE;
+    }
+    else {
+        memcpy(con->send_buffer + con->send_buffer_len, buffer, len);
+        size = len;
+        con->send_buffer_len += len;
+    }
 
     pthread_mutex_unlock(&cons[conn_id]->con_lock);
 
@@ -60,10 +72,12 @@ int setup_connection(uint32_t ip, uint16_t port) {
     /* Implement the sender part of the Three Way Handshake. Blocks
     until the connection is established */
 
-    int ret = 0;
     struct connection *con = (struct connection *)malloc(sizeof(struct connection));
     int conn_id = 0;
     con->sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (con->sockfd == -1) {
+        DEBUG_PRINT("socket creation failed\n");
+    }
 
     struct sockaddr_in server_addr;
     server_addr.sin_family = AF_INET;
@@ -87,16 +101,17 @@ int setup_connection(uint32_t ip, uint16_t port) {
 
     struct poli_synack synack;
     while (1) {
+        DEBUG_PRINT("Sending SYN to %s: %d\n", inet_ntoa(server_addr.sin_addr), ntohs(server_addr.sin_port));
         sendto(con->sockfd, &syn, sizeof(syn), 0, (struct sockaddr *)&server_addr, sizeof(server_addr));
 
         recvfrom(con->sockfd, &synack, sizeof(synack), 0, NULL, NULL);
 
         if (synack.hdr.protocol_id == POLI_PROTOCOL_ID && synack.hdr.type == SYNACK) {
-            DEBUG_PRINT("Recieved SYN+ACK");
+            DEBUG_PRINT("Received SYN+ACK\n");
             break;
         }
         else {
-            DEBUG_PRINT("Expected SYN+ACK but got something else");
+            DEBUG_PRINT("Expected SYN+ACK but got something else\n");
         }
     }
     server_addr.sin_port = synack.assigned_port; //already in network order
@@ -110,6 +125,7 @@ int setup_connection(uint32_t ip, uint16_t port) {
     ack.ack_num = 0;
     ack.recv_window = 0;
 
+    DEBUG_PRINT("Sending ACK to %s: %d\n", inet_ntoa(con->servaddr.sin_addr), ntohs(con->servaddr.sin_port));
     sendto(con->sockfd, &ack, sizeof(ack), 0, (struct sockaddr *)&con->servaddr, sizeof(con->servaddr));
 
     /* We will send the SYN on 8031. Then we will receive a SYN-ACK with the connection
@@ -136,7 +152,7 @@ int setup_connection(uint32_t ip, uint16_t port) {
     pthread_mutex_init(&con->con_lock, NULL);
     cons.insert({conn_id, con});
 
-    DEBUG_PRINT("Connection established!");
+    DEBUG_PRINT("Connection established!\n");
 
     return conn_id;
 }

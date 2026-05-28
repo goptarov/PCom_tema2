@@ -8,6 +8,7 @@
 #include <poll.h>
 #include <cassert>
 #include <cstring>
+#include <unistd.h>
 #include <sys/timerfd.h>
 
 int listen_sockfd;
@@ -26,6 +27,26 @@ int recv_data(int conn_id, char *buffer, int len)
     
     /* We will write code here as to not have sync problems with recv_handler */
 
+    struct connection *con = cons[conn_id];
+
+    //blocking loop (otherwise this will read nothing and return 0 which will uselessly keep looping in server.cpp)
+    while (con->recv_buffer_len == 0) {
+        pthread_mutex_unlock(&cons[conn_id]->con_lock);
+        usleep(1000);
+        pthread_mutex_lock(&cons[conn_id]->con_lock);
+    }
+
+    if (len < con->recv_buffer_len)
+        size = len;
+    else
+        size = con->recv_buffer_len;
+
+    memcpy(buffer, con->recv_buffer, size);
+    con->recv_buffer_len -= size;
+
+    //we have to move what is left unread to the beggining of the recv_buffer
+    memcpy(con->recv_buffer, con->recv_buffer + size, con->recv_buffer_len);
+
     pthread_mutex_unlock(&cons[conn_id]->con_lock);
 
     return size;
@@ -33,10 +54,9 @@ int recv_data(int conn_id, char *buffer, int len)
 
 void *receiver_handler(void *arg)
 {
-
     char segment[MAX_SEGMENT_SIZE];
     int res;
-    DEBUG_PRINT("Starting recviver handler\n");
+    DEBUG_PRINT("Starting receiver handler\n");
 
     while (1) {
 
@@ -50,11 +70,12 @@ void *receiver_handler(void *arg)
         /* Handle segment received from the sender. We use this between locks
         as to not have synchronization issues with the recv_data calls which are
         on the main thread */
+        if (res != -1) {
+            //TODO: Handle
+        }
 
         pthread_mutex_unlock(&cons[conn_id]->con_lock);
     }
-
-    
 }
 
 int wait4connect(uint32_t ip, uint16_t port)
@@ -84,11 +105,12 @@ int wait4connect(uint32_t ip, uint16_t port)
      * the chosen port. Send the data port number via SYN-ACK to the client */
     con->sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (con->sockfd == -1) {
-        DEBUG_PRINT("Couldn't create client socket");
+        DEBUG_PRINT("Couldn't create client socket\n");
         exit(-1);
     }
 
     recvfrom(listen_sockfd, buf, sizeof(buf), 0, (struct sockaddr *)&client_addr, &client_addr_len);
+    DEBUG_PRINT("Recieved SYN from %s: %d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 
     struct sockaddr_in server_new_addr;
     memset(&server_new_addr, 0, sizeof(struct sockaddr_in));
@@ -111,19 +133,18 @@ int wait4connect(uint32_t ip, uint16_t port)
     synack.hdr.recv_window = 0;
     synack.assigned_port = server_new_addr.sin_port;
 
-    sendto(listen_sockfd, &synack, sizeof(synack), 0, (struct sockaddr *)&client_addr, client_addr_len);
-
     while (1) {
+        DEBUG_PRINT("Sending SYN+ACK communicating assigned port is: %d\n", ntohs(synack.assigned_port));
         sendto(listen_sockfd, &synack, sizeof(synack), 0, (struct sockaddr *)&client_addr, client_addr_len);
 
         recvfrom(con->sockfd, buf, sizeof(buf), 0, NULL, NULL);
-        struct poli_tcp_ctrl_hdr *ack = (struct poli_tcp_ctrl_hdr *)buf;
+        auto *ack = (struct poli_tcp_ctrl_hdr *)buf;
         if (ack->protocol_id == POLI_PROTOCOL_ID && ack->type == ACK) {
-            DEBUG_PRINT("Recieved ACK")
+            DEBUG_PRINT("Recieved ACK from: %s: %d\n", inet_ntoa(con->servaddr.sin_addr), ntohs(con->servaddr.sin_port));
             break;
         }else {
             //Recieved something else
-            DEBUG_PRINT("Received non-ACK, resending SYN+ACK");
+            DEBUG_PRINT("Received non-ACK, resending SYN+ACK\n");
         }
     }
 
@@ -147,7 +168,7 @@ int wait4connect(uint32_t ip, uint16_t port)
     pthread_mutex_init(&con->con_lock, NULL);
     cons.insert({conn_id, con});
 
-    DEBUG_PRINT("Connection established!");
+    DEBUG_PRINT("Connection established!\n");
 
     return conn_id;
 }
@@ -160,7 +181,7 @@ void init_receiver(int recv_buffer_bytes)
     /* TODO: Create the connection socket and bind it to 8032 */
     listen_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (listen_sockfd == -1) {
-        DEBUG_PRINT("Couldn't create socket");
+        DEBUG_PRINT("Couldn't create socket\n");
         exit(-1);
     }
 
@@ -172,7 +193,7 @@ void init_receiver(int recv_buffer_bytes)
 
     int bind_ret = bind(listen_sockfd, (struct sockaddr *)&addr, sizeof(addr));
     if (bind_ret == -1) {
-        DEBUG_PRINT("Couldn't bind socket");
+        DEBUG_PRINT("Couldn't bind socket\n");
         exit(-1);
     }
 

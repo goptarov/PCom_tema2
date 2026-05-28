@@ -5,9 +5,14 @@
 #include "utils.h"
 #include <arpa/inet.h>
 
+#include "protocol.h"
+
 /* Maximum segment size, change as you see fit */
 #define MAX_DATA_SIZE 512
 #define MAX_SEGMENT_SIZE (MAX_DATA_SIZE + sizeof(poli_tcp_data_hdr))
+
+//Size for the buffers to which we write and from which we read
+#define MAX_BUF_SIZE (1024 * 1024)
 
 #define MAX_CONNECTIONS 32
 
@@ -22,11 +27,18 @@ struct connection {
     struct sockaddr_in servaddr; /* used to identify the destination */
     pthread_mutex_t con_lock; /* Used for syncronization with the handler thread and read/send calls.*/
 
-    /* TODO. Parameters used only by the sender */
     int max_window_seq; /* Used to store the max number of packets that can be inflight, since we can
                            have many more packets in our window */
 
+    /* TODO. Parameters used only by the sender */
+    char send_buffer[MAX_BUF_SIZE];
+    int send_buffer_len;
+    int next_seq;
+    int last_acked_seq;
+
     /* TODO. Parameters used only by the client */
+    char recv_buffer[MAX_BUF_SIZE];
+    int recv_buffer_len;
 };
 
 /* ########## API that we expose to the application ########### */
