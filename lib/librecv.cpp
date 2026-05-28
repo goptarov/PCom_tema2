@@ -117,14 +117,13 @@ int wait4connect(uint32_t ip, uint16_t port)
         sendto(listen_sockfd, &synack, sizeof(synack), 0, (struct sockaddr *)&client_addr, client_addr_len);
 
         recvfrom(con->sockfd, buf, sizeof(buf), 0, NULL, NULL);
-
         struct poli_tcp_ctrl_hdr *ack = (struct poli_tcp_ctrl_hdr *)buf;
-
         if (ack->protocol_id == POLI_PROTOCOL_ID && ack->type == ACK) {
+            DEBUG_PRINT("Recieved ACK")
             break;
         }else {
             //Recieved something else
-            DEBUG_PRINT("Received non-ack, resending syn+ack");
+            DEBUG_PRINT("Received non-ACK, resending SYN+ACK");
         }
     }
 

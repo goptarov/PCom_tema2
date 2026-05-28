@@ -56,14 +56,19 @@ void *sender_handler(void *arg)
     }
 }
 
-int setup_connection(uint32_t ip, uint16_t port)
-{
+int setup_connection(uint32_t ip, uint16_t port) {
     /* Implement the sender part of the Three Way Handshake. Blocks
     until the connection is established */
 
+    int ret = 0;
     struct connection *con = (struct connection *)malloc(sizeof(struct connection));
     int conn_id = 0;
     con->sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+
+    struct sockaddr_in server_addr;
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = ip;
+    server_addr.sin_port = port;
 
     /* // This can be used to set a timer on a socket 
     struct timeval tv;
@@ -72,6 +77,40 @@ int setup_connection(uint32_t ip, uint16_t port)
     if (setsockopt(con->sockfd, SOL_SOCKET, SO_RCVTIMEO,&tv,sizeof(tv)) < 0) {
         perror("Error");
     } */
+
+    struct poli_tcp_ctrl_hdr syn;
+    syn.protocol_id = POLI_PROTOCOL_ID;
+    syn.conn_id = conn_id;
+    syn.type = SYN;
+    syn.ack_num = 0;
+    syn.recv_window = 0;
+
+    struct poli_synack synack;
+    while (1) {
+        sendto(con->sockfd, &syn, sizeof(syn), 0, (struct sockaddr *)&server_addr, sizeof(server_addr));
+
+        recvfrom(con->sockfd, &synack, sizeof(synack), 0, NULL, NULL);
+
+        if (synack.hdr.protocol_id == POLI_PROTOCOL_ID && synack.hdr.type == SYNACK) {
+            DEBUG_PRINT("Recieved SYN+ACK");
+            break;
+        }
+        else {
+            DEBUG_PRINT("Expected SYN+ACK but got something else");
+        }
+    }
+    server_addr.sin_port = synack.assigned_port; //already in network order
+    con->servaddr = server_addr;
+    con->conn_id = conn_id;
+
+    struct poli_tcp_ctrl_hdr ack;
+    ack.protocol_id = POLI_PROTOCOL_ID;
+    ack.conn_id = conn_id;
+    ack.type = ACK;
+    ack.ack_num = 0;
+    ack.recv_window = 0;
+
+    sendto(con->sockfd, &ack, sizeof(ack), 0, (struct sockaddr *)&con->servaddr, sizeof(con->servaddr));
 
     /* We will send the SYN on 8031. Then we will receive a SYN-ACK with the connection
      * port. We can use con->sockfd for both cases, but we will need to update server_addr
@@ -99,7 +138,7 @@ int setup_connection(uint32_t ip, uint16_t port)
 
     DEBUG_PRINT("Connection established!");
 
-    return 0;
+    return conn_id;
 }
 
 void init_sender(int speed, int delay)
