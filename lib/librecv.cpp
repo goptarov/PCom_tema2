@@ -71,7 +71,10 @@ void *receiver_handler(void *arg)
         as to not have synchronization issues with the recv_data calls which are
         on the main thread */
         if (res != -1) {
-            //TODO: Handle
+            //TODO: Handle recieved segment
+        }
+        else {
+            //TODO: Handle timeout
         }
 
         pthread_mutex_unlock(&cons[conn_id]->con_lock);

@@ -9,14 +9,13 @@
 #include <poll.h>
 #include <sys/timerfd.h>
 
-using namespace std;
-
 std::map<int, struct connection *> cons;
 
 struct pollfd data_fds[MAX_CONNECTIONS];
 /* Used for timers per connection */
 struct pollfd timer_fds[MAX_CONNECTIONS];
 int fdmax = 0;
+int window_size = 1;
 
 int send_data(int conn_id, char *buffer, int len)
 {
@@ -53,8 +52,23 @@ void *sender_handler(void *arg)
         if (cons.size() == 0) {
             continue;
         }
+
+        for (std::pair<const int, connection *> &pair : cons) {
+            struct connection *con = pair.second;
+
+            pthread_mutex_lock(&con->con_lock);
+
+            //send
+            while (con->next_seq < con->last_acked_seq + window_size) {
+
+            }
+
+            pthread_mutex_unlock(&con->con_lock);
+        }
+
         int conn_id = -1;
         do {
+            //this looks for received segments from server.
             res = recv_message_or_timeout(buf, MAX_SEGMENT_SIZE, &conn_id);
         } while(res == -14);
 
@@ -159,10 +173,16 @@ int setup_connection(uint32_t ip, uint16_t port) {
 
 void init_sender(int speed, int delay)
 {
-    pthread_t thread1;
-    int ret;
+    //speed (Mb/s), delay(ms)
+    const int bdp = ((speed * 1000000) * (delay / 1000)) / 8; //bytes
+    window_size = bdp / (int)MAX_SEGMENT_SIZE;
+    if (window_size < 1) window_size = 1;
+    else if (window_size > (int)MAX_SEGMENT_SIZE) window_size = MAX_SEGMENT_SIZE;
+
+    DEBUG_PRINT("window size is %d\n", window_size);
 
     /* Create a thread that will*/
-    ret = pthread_create( &thread1, NULL, sender_handler, NULL);
+    pthread_t thread1;
+    int ret = pthread_create( &thread1, NULL, sender_handler, NULL);
     assert(ret == 0);
 }

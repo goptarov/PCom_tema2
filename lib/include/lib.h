@@ -13,7 +13,7 @@
 
 //Size for the buffers to which we write and from which we read
 #define MAX_BUF_SIZE (1024 * 1024)
-
+#define MAX_WINDOW_SIZE 64
 #define MAX_CONNECTIONS 32
 
 /* Protocol control block. Used track different parameters about a connection. 
@@ -35,6 +35,10 @@ struct connection {
     int send_buffer_len;
     int next_seq;
     int last_acked_seq;
+
+    //We need segment copies for retransmission.
+    char segment_copies[MAX_WINDOW_SIZE][MAX_SEGMENT_SIZE];
+    int segment_copies_lengths[MAX_WINDOW_SIZE];
 
     /* TODO. Parameters used only by the client */
     char recv_buffer[MAX_BUF_SIZE];
