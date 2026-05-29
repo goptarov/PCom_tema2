@@ -24,7 +24,7 @@ int send_data(int conn_id, char *buffer, int len)
     pthread_mutex_lock(&cons[conn_id]->con_lock);
 
     /* We will write code here as to not have sync problems with sender_handler */
-    struct connection *con = cons[conn_id];
+    connection *con = cons[conn_id];
 
     if (len > MAX_BUF_SIZE - con->send_buffer_len) {
         memcpy(con->send_buffer + con->send_buffer_len, buffer, MAX_BUF_SIZE - con->send_buffer_len);
@@ -54,13 +54,35 @@ void *sender_handler(void *arg)
         }
 
         for (std::pair<const int, connection *> &pair : cons) {
-            struct connection *con = pair.second;
+            connection *con = pair.second;
 
             pthread_mutex_lock(&con->con_lock);
 
-            //send
-            while (con->next_seq < con->last_acked_seq + window_size) {
+            //Send window_size segments, increasing next_seq after every sent segment. last_acked_seq remains constant
+            //here until all are sent
+            while (con->next_seq < con->last_acked_seq + window_size && con->send_buffer_len > 0) {
 
+                int segment_len = con->send_buffer_len > MAX_DATA_SIZE ? MAX_DATA_SIZE : con->send_buffer_len;
+
+                poli_tcp_data_hdr segment_hdr;
+                segment_hdr.protocol_id = POLI_PROTOCOL_ID;
+                segment_hdr.conn_id = con->conn_id;
+                segment_hdr.type = DATA;
+                segment_hdr.seq_num = con->next_seq;
+                segment_hdr.len = segment_len;
+
+                memcpy(&con->segment_copies[segment_hdr.seq_num], &segment_hdr, sizeof(segment_hdr));
+                memcpy(&con->segment_copies[segment_hdr.seq_num] + sizeof(segment_hdr), &con->send_buffer, segment_len);
+                con->send_buffer_len -= segment_len;
+
+                //Move what is left unread from send_buffer to the beggining
+                memcpy(&con->send_buffer, &con->send_buffer + segment_len, segment_len);
+
+                con->segment_copies_lengths[segment_hdr.seq_num] = sizeof(segment_hdr) + segment_len;
+
+                DEBUG_PRINT("Sending segment to %s: %d\n", inet_ntoa(con->servaddr.sin_addr), ntohs(con->servaddr.sin_port));
+                sendto(con->sockfd, con->segment_copies[con->conn_id], con->segment_copies_lengths[con->conn_id], 0, (const sockaddr*)&con->servaddr, sizeof(con->servaddr));
+                con->next_seq++;
             }
 
             pthread_mutex_unlock(&con->con_lock);
@@ -77,6 +99,21 @@ void *sender_handler(void *arg)
         /* Handle segment received from the receiver. We use this between locks
         as to not have synchronization issues with the send_data calls which are
         on the main thread */
+        connection *con = cons[conn_id];
+        if (res != -1) {
+            //Handle received ack
+            poli_tcp_ctrl_hdr *ack = (poli_tcp_ctrl_hdr *)buf;
+            if (ack->protocol_id == POLI_PROTOCOL_ID && ack->type == ACK) {
+                DEBUG_PRINT("Received ACK\n");
+                con->last_acked_seq = ntohs(ack->ack_num);
+            }
+        }
+        else {
+            //Handle timeout
+            for (int i = con->last_acked_seq; i < con->next_seq; i++) {
+                sendto(con->sockfd, con->segment_copies[i], con->segment_copies_lengths[i], 0, (const sockaddr*)&con->servaddr, sizeof(con->servaddr));
+            }
+        }
 
         pthread_mutex_unlock(&cons[conn_id]->con_lock);
     }
@@ -86,14 +123,14 @@ int setup_connection(uint32_t ip, uint16_t port) {
     /* Implement the sender part of the Three Way Handshake. Blocks
     until the connection is established */
 
-    struct connection *con = (struct connection *)malloc(sizeof(struct connection));
+    connection *con = (connection *)malloc(sizeof(connection));
     int conn_id = 0;
     con->sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (con->sockfd == -1) {
         DEBUG_PRINT("socket creation failed\n");
     }
 
-    struct sockaddr_in server_addr;
+    sockaddr_in server_addr;
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = ip;
     server_addr.sin_port = port;
@@ -113,10 +150,10 @@ int setup_connection(uint32_t ip, uint16_t port) {
     syn.ack_num = 0;
     syn.recv_window = 0;
 
-    struct poli_synack synack;
+    poli_synack synack;
     while (1) {
         DEBUG_PRINT("Sending SYN to %s: %d\n", inet_ntoa(server_addr.sin_addr), ntohs(server_addr.sin_port));
-        sendto(con->sockfd, &syn, sizeof(syn), 0, (struct sockaddr *)&server_addr, sizeof(server_addr));
+        sendto(con->sockfd, &syn, sizeof(syn), 0, (sockaddr *)&server_addr, sizeof(server_addr));
 
         recvfrom(con->sockfd, &synack, sizeof(synack), 0, NULL, NULL);
 
@@ -132,7 +169,7 @@ int setup_connection(uint32_t ip, uint16_t port) {
     con->servaddr = server_addr;
     con->conn_id = conn_id;
 
-    struct poli_tcp_ctrl_hdr ack;
+    poli_tcp_ctrl_hdr ack;
     ack.protocol_id = POLI_PROTOCOL_ID;
     ack.conn_id = conn_id;
     ack.type = ACK;
@@ -140,7 +177,7 @@ int setup_connection(uint32_t ip, uint16_t port) {
     ack.recv_window = 0;
 
     DEBUG_PRINT("Sending ACK to %s: %d\n", inet_ntoa(con->servaddr.sin_addr), ntohs(con->servaddr.sin_port));
-    sendto(con->sockfd, &ack, sizeof(ack), 0, (struct sockaddr *)&con->servaddr, sizeof(con->servaddr));
+    sendto(con->sockfd, &ack, sizeof(ack), 0, (sockaddr *)&con->servaddr, sizeof(con->servaddr));
 
     /* We will send the SYN on 8031. Then we will receive a SYN-ACK with the connection
      * port. We can use con->sockfd for both cases, but we will need to update server_addr
@@ -155,7 +192,7 @@ int setup_connection(uint32_t ip, uint16_t port) {
        to know if a timeout has happend on our connection */
     timer_fds[fdmax].fd = timerfd_create(CLOCK_REALTIME,  0);    
     timer_fds[fdmax].events = POLLIN;    
-    struct itimerspec spec;     
+    struct itimerspec spec;
     spec.it_value.tv_sec = 1;    
     spec.it_value.tv_nsec = 0;    
     spec.it_interval.tv_sec = 1;    

@@ -13,6 +13,7 @@
 
 //Size for the buffers to which we write and from which we read
 #define MAX_BUF_SIZE (1024 * 1024)
+//Maximum amount of segments that we can send in a window
 #define MAX_WINDOW_SIZE 64
 #define MAX_CONNECTIONS 32
 

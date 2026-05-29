@@ -27,7 +27,7 @@ int recv_data(int conn_id, char *buffer, int len)
     
     /* We will write code here as to not have sync problems with recv_handler */
 
-    struct connection *con = cons[conn_id];
+    connection *con = cons[conn_id];
 
     //blocking loop (otherwise this will read nothing and return 0 which will uselessly keep looping in server.cpp)
     while (con->recv_buffer_len == 0) {
@@ -70,8 +70,10 @@ void *receiver_handler(void *arg)
         /* Handle segment received from the sender. We use this between locks
         as to not have synchronization issues with the recv_data calls which are
         on the main thread */
+        connection *con = cons[conn_id];
         if (res != -1) {
-            //TODO: Handle recieved segment
+            //TODO: Handle received segment
+
         }
         else {
             //TODO: Handle timeout
@@ -86,11 +88,11 @@ int wait4connect(uint32_t ip, uint16_t port)
     /* TODO: Implement the Three Way Handshake on the receiver part. This blocks
      * until a connection is established. */
     int ret = 0;
-    struct sockaddr_in client_addr;
+    sockaddr_in client_addr;
     socklen_t client_addr_len = sizeof(client_addr);
     char buf[MAX_SEGMENT_SIZE];
 
-    struct connection *con = (struct connection *)malloc(sizeof(struct connection));
+    connection *con = (connection *)malloc(sizeof(connection));
     static int next_conn_id = 0;
     int conn_id = next_conn_id++;
 
@@ -112,23 +114,23 @@ int wait4connect(uint32_t ip, uint16_t port)
         exit(-1);
     }
 
-    recvfrom(listen_sockfd, buf, sizeof(buf), 0, (struct sockaddr *)&client_addr, &client_addr_len);
+    recvfrom(listen_sockfd, buf, sizeof(buf), 0, (sockaddr *)&client_addr, &client_addr_len);
     DEBUG_PRINT("Recieved SYN from %s: %d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 
-    struct sockaddr_in server_new_addr;
-    memset(&server_new_addr, 0, sizeof(struct sockaddr_in));
+    sockaddr_in server_new_addr;
+    memset(&server_new_addr, 0, sizeof(sockaddr_in));
     server_new_addr.sin_family = AF_INET;
     server_new_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
     do {
         server_new_addr.sin_port = htons(1024 + rand() % 65411);
-        ret = bind(con->sockfd, (struct sockaddr *)&server_new_addr, sizeof(server_new_addr));
+        ret = bind(con->sockfd, (sockaddr *)&server_new_addr, sizeof(server_new_addr));
     } while (ret == -1); //repeat if the port was already assigned
 
     con->servaddr = client_addr;
     con->conn_id = conn_id;
 
-    struct poli_synack synack;
+    poli_synack synack;
     synack.hdr.protocol_id = POLI_PROTOCOL_ID;
     synack.hdr.conn_id = conn_id;
     synack.hdr.type = SYNACK;
@@ -138,10 +140,10 @@ int wait4connect(uint32_t ip, uint16_t port)
 
     while (1) {
         DEBUG_PRINT("Sending SYN+ACK communicating assigned port is: %d\n", ntohs(synack.assigned_port));
-        sendto(listen_sockfd, &synack, sizeof(synack), 0, (struct sockaddr *)&client_addr, client_addr_len);
+        sendto(listen_sockfd, &synack, sizeof(synack), 0, (sockaddr *)&client_addr, client_addr_len);
 
         recvfrom(con->sockfd, buf, sizeof(buf), 0, NULL, NULL);
-        auto *ack = (struct poli_tcp_ctrl_hdr *)buf;
+        auto *ack = (poli_tcp_ctrl_hdr *)buf;
         if (ack->protocol_id == POLI_PROTOCOL_ID && ack->type == ACK) {
             DEBUG_PRINT("Recieved ACK from: %s: %d\n", inet_ntoa(con->servaddr.sin_addr), ntohs(con->servaddr.sin_port));
             break;
@@ -188,13 +190,13 @@ void init_receiver(int recv_buffer_bytes)
         exit(-1);
     }
 
-    struct sockaddr_in addr;
+    sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
     addr.sin_port = htons(8032);
 
-    int bind_ret = bind(listen_sockfd, (struct sockaddr *)&addr, sizeof(addr));
+    int bind_ret = bind(listen_sockfd, (sockaddr *)&addr, sizeof(addr));
     if (bind_ret == -1) {
         DEBUG_PRINT("Couldn't bind socket\n");
         exit(-1);
