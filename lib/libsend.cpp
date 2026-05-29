@@ -29,7 +29,7 @@ int send_data(int conn_id, char *buffer, int len)
     if (len > MAX_BUF_SIZE - con->send_buffer_len) {
         memcpy(con->send_buffer + con->send_buffer_len, buffer, MAX_BUF_SIZE - con->send_buffer_len);
         size = MAX_BUF_SIZE - con->send_buffer_len;
-        con->send_buffer_len = MAX_BUF_SIZE;
+        con->send_buffer_len = (uint16_t)MAX_BUF_SIZE;
     }
     else {
         memcpy(con->send_buffer + con->send_buffer_len, buffer, len);
@@ -62,11 +62,16 @@ void *sender_handler(void *arg)
             //here until all are sent
             while (con->next_seq < con->last_acked_seq + window_size && con->send_buffer_len > 0) {
 
-                int segment_len = con->send_buffer_len > MAX_DATA_SIZE ? MAX_DATA_SIZE : con->send_buffer_len;
+                uint16_t segment_len = con->send_buffer_len > MAX_DATA_SIZE ? MAX_DATA_SIZE : con->send_buffer_len;
 
-                poli_tcp_data_hdr segment_hdr;
-                segment_hdr.protocol_id = POLI_PROTOCOL_ID;
-                segment_hdr.conn_id = con->conn_id;
+                poli_tcp_data_hdr segment_hdr ={
+                    .protocol_id = POLI_PROTOCOL_ID,
+                    .conn_id = con->conn_id,
+                    .type = DATA,
+                    .seq_num = con->next_seq,
+                    .len = segment_len
+                };
+
                 segment_hdr.type = DATA;
                 segment_hdr.seq_num = con->next_seq;
                 segment_hdr.len = segment_len;
@@ -143,7 +148,7 @@ int setup_connection(uint32_t ip, uint16_t port) {
         perror("Error");
     } */
 
-    struct poli_tcp_ctrl_hdr syn;
+    poli_tcp_ctrl_hdr syn;
     syn.protocol_id = POLI_PROTOCOL_ID;
     syn.conn_id = conn_id;
     syn.type = SYN;
@@ -161,9 +166,7 @@ int setup_connection(uint32_t ip, uint16_t port) {
             DEBUG_PRINT("Received SYN+ACK\n");
             break;
         }
-        else {
-            DEBUG_PRINT("Expected SYN+ACK but got something else\n");
-        }
+        DEBUG_PRINT("Expected SYN+ACK but got something else\n");
     }
     server_addr.sin_port = synack.assigned_port; //already in network order
     con->servaddr = server_addr;
@@ -214,7 +217,7 @@ void init_sender(int speed, int delay)
     const int bdp = ((speed * 1000000) * (delay / 1000)) / 8; //bytes
     window_size = bdp / (int)MAX_SEGMENT_SIZE;
     if (window_size < 1) window_size = 1;
-    else if (window_size > (int)MAX_SEGMENT_SIZE) window_size = MAX_SEGMENT_SIZE;
+    else if (window_size > MAX_WINDOW_SIZE) window_size = MAX_WINDOW_SIZE;
 
     DEBUG_PRINT("window size is %d\n", window_size);
 

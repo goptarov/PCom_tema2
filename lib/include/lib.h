@@ -24,7 +24,7 @@ struct connection {
     /* common window for both the sender and receiver. */
     /* list window: A window representation */
     int sockfd; /* socket used for this connection */
-    int conn_id; /* connection identifier */
+    uint8_t conn_id; /* connection identifier */
     struct sockaddr_in servaddr; /* used to identify the destination */
     pthread_mutex_t con_lock; /* Used for syncronization with the handler thread and read/send calls.*/
 
@@ -33,9 +33,9 @@ struct connection {
 
     /* TODO. Parameters used only by the sender */
     char send_buffer[MAX_BUF_SIZE];
-    int send_buffer_len;
-    int next_seq;
-    int last_acked_seq;
+    uint32_t send_buffer_len;
+    uint8_t next_seq;
+    uint8_t last_acked_seq;
 
     //We need segment copies for retransmission.
     char segment_copies[MAX_WINDOW_SIZE][MAX_SEGMENT_SIZE];
@@ -43,7 +43,8 @@ struct connection {
 
     /* TODO. Parameters used only by the client */
     char recv_buffer[MAX_BUF_SIZE];
-    int recv_buffer_len;
+    uint16_t recv_buffer_len;
+	uint8_t next_expected_seq;
 };
 
 /* ########## API that we expose to the application ########### */

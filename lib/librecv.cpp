@@ -11,13 +11,13 @@
 #include <unistd.h>
 #include <sys/timerfd.h>
 
-int listen_sockfd;
 std::map<int, struct connection *> cons;
 
 struct pollfd data_fds[MAX_CONNECTIONS];
 /* Used for timers per connection */
 struct pollfd timer_fds[MAX_CONNECTIONS];
 int fdmax = 0;
+int listen_sockfd;
 
 int recv_data(int conn_id, char *buffer, int len)
 {
