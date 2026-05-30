@@ -132,6 +132,5 @@ int main(int argc, char *argv[])
 			close(file_fd[i]);
 		}
     }
-
     printf("Server exiting\n");
 }

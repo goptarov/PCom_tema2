@@ -4,7 +4,7 @@ LIBRARY=nope
 INCPATHS= -I lib/include
 LIBPATHS=.
 LDFLAGS=
-CFLAGS=-c -Wall -Werror -Wno-error=unused-variable -g
+CFLAGS=-c -Wall -Werror -Wno-error=unused-variable -g -DDEBUG
 CC=g++
 
 # ------------ MAGIC BEGINS HERE -------------

@@ -29,9 +29,9 @@ int recv_message_or_timeout(char *buff, size_t len, int *conn_id)
     int ret, i;
 
     /* We check if data is available on a socket or if a timer has expired */
-    ret = poll(data_fds, fdmax, 0); 
+    ret = poll(data_fds, fdmax, 0);
     assert(ret >= 0);
-    ret = poll(timer_fds, fdmax, 0); 
+    ret = poll(timer_fds, fdmax, 0);
     assert(ret >= 0);
 
     for (i = 0; i < fdmax; i++) {

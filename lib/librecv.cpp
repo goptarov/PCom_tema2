@@ -26,17 +26,16 @@ int recv_data(int conn_id, char *buffer, int len)
     pthread_mutex_lock(&cons[conn_id]->con_lock);
     
     /* We will write code here as to not have sync problems with recv_handler */
-
     connection *con = cons[conn_id];
 
     //blocking loop (otherwise this will read nothing and return 0 which will uselessly keep looping in server.cpp)
-    while (con->recv_buffer_len == 0) {
+    while (con->recv_buffer_len == 0 && !con->transfer_done) {
         pthread_mutex_unlock(&cons[conn_id]->con_lock);
         usleep(1000);
         pthread_mutex_lock(&cons[conn_id]->con_lock);
     }
 
-    if (len < con->recv_buffer_len)
+    if ((uint32_t)len < con->recv_buffer_len)
         size = len;
     else
         size = con->recv_buffer_len;
@@ -45,7 +44,7 @@ int recv_data(int conn_id, char *buffer, int len)
     con->recv_buffer_len -= size;
 
     //we have to move what is left unread to the beggining of the recv_buffer
-    memcpy(con->recv_buffer, con->recv_buffer + size, con->recv_buffer_len);
+    memmove(con->recv_buffer, con->recv_buffer + size, con->recv_buffer_len);
 
     pthread_mutex_unlock(&cons[conn_id]->con_lock);
 
@@ -72,13 +71,66 @@ void *receiver_handler(void *arg)
         on the main thread */
         connection *con = cons[conn_id];
         if (res != -1) {
-            //TODO: Handle received segment
+            poli_tcp_data_hdr *segment_hdr = (poli_tcp_data_hdr *)segment;
+            if (segment_hdr->protocol_id == POLI_PROTOCOL_ID && segment_hdr->type == DATA) {
+                uint16_t seq = ntohs(segment_hdr->seq_num);
+                uint16_t len = ntohs(segment_hdr->len);
 
+                //only read the segment with the expected seq, otherwise drop.
+                if (seq == con->next_expected_seq && con->recv_buffer_len + len <= MAX_BUF_SIZE) {
+                    memcpy(con->recv_buffer + con->recv_buffer_len, segment + sizeof(poli_tcp_data_hdr), len);
+                    con->recv_buffer_len += len;
+                    con->next_expected_seq++;
+                    DEBUG_PRINT("Delivered seq %u (%u bytes)\n", seq, len);
+                }
+                else {
+                    DEBUG_PRINT("Dropped seq %u (expected %u, buf %u/%u)\n", seq, con->next_expected_seq, con->recv_buffer_len, MAX_BUF_SIZE);
+                }
+
+                uint32_t free_space = MAX_BUF_SIZE - con->recv_buffer_len;
+                uint16_t truncated = (free_space > 0xFFFF) ? 0xFFFF : free_space;
+
+                poli_tcp_ctrl_hdr ack;
+                ack.protocol_id = POLI_PROTOCOL_ID;
+                ack.conn_id = conn_id;
+                ack.type = ACK;
+                ack.ack_num = htons(con->next_expected_seq);
+                ack.recv_window = htons(truncated);
+
+                sendto(con->sockfd, &ack, sizeof(ack), 0, (const sockaddr *)&con->servaddr, sizeof(con->servaddr));
+            }
+            else if (segment_hdr->protocol_id == POLI_PROTOCOL_ID && segment_hdr->type == FIN) {
+                DEBUG_PRINT("Received FIN on conn %d, sending FINACK\n", conn_id);
+
+                poli_tcp_ctrl_hdr finack;
+                finack.protocol_id = POLI_PROTOCOL_ID;
+                finack.conn_id = conn_id;
+                finack.type = FINACK;
+                finack.ack_num = 0;
+                finack.recv_window = 0;
+
+                // Send multiple times to make sure it gets through
+                for (int i = 0; i < 5; i++)
+                    sendto(con->sockfd, &finack, sizeof(finack), 0, (const sockaddr*)&con->servaddr, sizeof(con->servaddr));
+
+                con->transfer_done = 1;
+            }
         }
         else {
-            //TODO: Handle timeout
-        }
+            //Timeout
+            uint32_t free_space = MAX_BUF_SIZE - con->recv_buffer_len;
+            uint16_t truncated = (free_space > 0xFFFF) ? 0xFFFF : free_space;
 
+            poli_tcp_ctrl_hdr ack;
+            ack.protocol_id = POLI_PROTOCOL_ID;
+            ack.conn_id = conn_id;
+            ack.type = ACK;
+            ack.ack_num = htons(con->next_expected_seq);
+            ack.recv_window = htons(truncated);
+
+            sendto(con->sockfd, &ack, sizeof(ack), 0, (const sockaddr *)&con->servaddr, sizeof(con->servaddr));
+            DEBUG_PRINT("Receiver timeout conn %d: re-ACK %u\n", conn_id, con->next_expected_seq);
+        }
         pthread_mutex_unlock(&cons[conn_id]->con_lock);
     }
 }
@@ -93,18 +145,14 @@ int wait4connect(uint32_t ip, uint16_t port)
     char buf[MAX_SEGMENT_SIZE];
 
     connection *con = (connection *)malloc(sizeof(connection));
+    memset(con, 0, sizeof(connection));
     static int next_conn_id = 0;
     int conn_id = next_conn_id++;
 
     /* This can be used to set a timer on a socket, useful once we received a
      * SYN. You may want to disable by setting the time to 0 (tv_sec = 0,
      * tv_usec = 0)
-    struct timeval tv;
-    tv.tv_sec = 2;
-    tv.tv_usec = 100000;
-    if (setsockopt(con->sockfd, SOL_SOCKET, SO_RCVTIMEO,&tv,sizeof(tv)) < 0) {
-        perror("Error");
-    } */
+     */
 
     /* Receive SYN on the connection socket. Create a new socket and bind it to
      * the chosen port. Send the data port number via SYN-ACK to the client */
@@ -112,6 +160,12 @@ int wait4connect(uint32_t ip, uint16_t port)
     if (con->sockfd == -1) {
         DEBUG_PRINT("Couldn't create client socket\n");
         exit(-1);
+    }
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 10000;
+    if (setsockopt(con->sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+        perror("Error");
     }
 
     recvfrom(listen_sockfd, buf, sizeof(buf), 0, (sockaddr *)&client_addr, &client_addr_len);
@@ -142,16 +196,25 @@ int wait4connect(uint32_t ip, uint16_t port)
         DEBUG_PRINT("Sending SYN+ACK communicating assigned port is: %d\n", ntohs(synack.assigned_port));
         sendto(listen_sockfd, &synack, sizeof(synack), 0, (sockaddr *)&client_addr, client_addr_len);
 
-        recvfrom(con->sockfd, buf, sizeof(buf), 0, NULL, NULL);
+        int bytes_recvd = recvfrom(con->sockfd, buf, sizeof(buf), 0, NULL, NULL);
+
+        if (bytes_recvd < 0) {
+            DEBUG_PRINT("Handshake timeout, resending SYN+ACK...\n");
+            continue;
+        }
+
         auto *ack = (poli_tcp_ctrl_hdr *)buf;
         if (ack->protocol_id == POLI_PROTOCOL_ID && ack->type == ACK) {
             DEBUG_PRINT("Recieved ACK from: %s: %d\n", inet_ntoa(con->servaddr.sin_addr), ntohs(con->servaddr.sin_port));
             break;
-        }else {
+        } else {
             //Recieved something else
             DEBUG_PRINT("Received non-ACK, resending SYN+ACK\n");
         }
     }
+
+    pthread_mutex_init(&con->con_lock, NULL);
+    cons.insert({conn_id, con});
 
     /* Since we can have multiple connection, we want to know if data is available
        on the socket used by a given connection. We use POLL for this */
@@ -163,15 +226,12 @@ int wait4connect(uint32_t ip, uint16_t port)
     timer_fds[fdmax].fd = timerfd_create(CLOCK_REALTIME,  0);    
     timer_fds[fdmax].events = POLLIN;    
     struct itimerspec spec;     
-    spec.it_value.tv_sec = 1;    
-    spec.it_value.tv_nsec = 0;    
-    spec.it_interval.tv_sec = 1;    
-    spec.it_interval.tv_nsec = 0;    
+    spec.it_value.tv_sec = 0;
+    spec.it_value.tv_nsec = 100000000;
+    spec.it_interval.tv_sec = 0;
+    spec.it_interval.tv_nsec = 100000000;
     timerfd_settime(timer_fds[fdmax].fd, 0, &spec, NULL);    
-    fdmax++;    
-
-    pthread_mutex_init(&con->con_lock, NULL);
-    cons.insert({conn_id, con});
+    fdmax++;
 
     DEBUG_PRINT("Connection established!\n");
 

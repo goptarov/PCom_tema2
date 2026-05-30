@@ -9,6 +9,8 @@
 #define SYNACK 1
 #define ACK 2
 #define DATA 3
+#define FIN 4
+#define FINACK 5
 
 /* Header for Data segments. Must be used in your implementation as it is. */
 struct __attribute__((packed)) poli_tcp_data_hdr {

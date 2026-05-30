@@ -76,13 +76,15 @@ int main(int argc, char *argv[])
 
             /* Wait a bit before trying to send again */
             if (n - bytes_sent != 0)
-                usleep(500000);
+                usleep(1000);
         }
     }
 
     printf("Finished sending the file\n");
     /* Give the other thread time to finish the transmission */
-    while (1) {}
+    while (1) {
+        sleep(1);
+    }
 
     return 0; 
 }

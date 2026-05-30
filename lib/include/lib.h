@@ -34,8 +34,14 @@ struct connection {
     /* TODO. Parameters used only by the sender */
     char send_buffer[MAX_BUF_SIZE];
     uint32_t send_buffer_len;
-    uint8_t next_seq;
-    uint8_t last_acked_seq;
+    uint16_t next_seq;
+    uint16_t last_acked_seq;
+    uint8_t flow_paused; //daca s-au trimis toate pachetele din window ne oprim din a trimite
+
+    //We need to know when the file is done transmitting
+    uint8_t fin_sent;
+    uint8_t transfer_started;
+    uint8_t transfer_done;
 
     //We need segment copies for retransmission.
     char segment_copies[MAX_WINDOW_SIZE][MAX_SEGMENT_SIZE];
@@ -43,8 +49,8 @@ struct connection {
 
     /* TODO. Parameters used only by the client */
     char recv_buffer[MAX_BUF_SIZE];
-    uint16_t recv_buffer_len;
-	uint8_t next_expected_seq;
+    uint32_t recv_buffer_len;
+	uint16_t next_expected_seq;
 };
 
 /* ########## API that we expose to the application ########### */
