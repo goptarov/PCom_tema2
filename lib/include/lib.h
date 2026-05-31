@@ -8,7 +8,7 @@
 #include "protocol.h"
 
 /* Maximum segment size, change as you see fit */
-#define MAX_DATA_SIZE 512
+#define MAX_DATA_SIZE 1024
 #define MAX_SEGMENT_SIZE (MAX_DATA_SIZE + sizeof(poli_tcp_data_hdr))
 
 //Size for the buffers to which we write and from which we read

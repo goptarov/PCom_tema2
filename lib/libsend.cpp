@@ -29,6 +29,12 @@ int send_data(int conn_id, char *buffer, int len)
     connection *con = cons[conn_id];
     con->transfer_started = 1;
 
+    while (con->send_buffer_len == MAX_BUF_SIZE) {
+        pthread_mutex_unlock(&con->con_lock);
+        usleep(100);
+        pthread_mutex_lock(&con->con_lock);
+    }
+
     if ((uint32_t)len > MAX_BUF_SIZE - con->send_buffer_len) {
         memcpy(con->send_buffer + con->send_buffer_len, buffer, MAX_BUF_SIZE - con->send_buffer_len);
         size = MAX_BUF_SIZE - con->send_buffer_len;
@@ -88,7 +94,7 @@ void *sender_handler(void *arg)
                 sendto(con->sockfd, con->segment_copies[idx], con->segment_copies_lengths[idx], 0, (const sockaddr*)&con->servaddr, sizeof(con->servaddr));
                 con->next_seq++;
             }
-            if (con->send_buffer_len == 0 && con->next_seq == con->last_acked_seq && !con->fin_sent) {
+            if (con->send_buffer_len == 0 && !con->fin_sent) {
 
                 poli_tcp_ctrl_hdr fin;
                 fin.protocol_id = POLI_PROTOCOL_ID;
@@ -98,7 +104,9 @@ void *sender_handler(void *arg)
                 fin.recv_window = 0;
 
                 DEBUG_PRINT("Sending FIN on conn %d\n", con->conn_id);
-                sendto(con->sockfd, &fin, sizeof(fin), 0, (const sockaddr*)&con->servaddr, sizeof(con->servaddr));
+                for (int i = 0; i < 5; i++) { //5 to make sure it arrives at leaast once.
+                    sendto(con->sockfd, &fin, sizeof(fin), 0, (const sockaddr*)&con->servaddr, sizeof(con->servaddr));
+                }
                 con->fin_sent = 1;
             }
         }
@@ -107,7 +115,7 @@ void *sender_handler(void *arg)
 
         int conn_id = -1;
         res = recv_message_or_timeout(buf, MAX_SEGMENT_SIZE, &conn_id);
-        if (res == -14) continue;
+        if (res == -14 || cons.find(conn_id) == cons.end()) continue;
 
         pthread_mutex_lock(&con->con_lock);
 
@@ -160,8 +168,8 @@ void *sender_handler(void *arg)
         }
 
         pthread_mutex_unlock(&con->con_lock);
-        if (con->transfer_done == 1) {
-            DEBUG_PRINT("Done transfer\n");
+        if (con->transfer_done) {
+            DEBUG_PRINT("Finished transmission.\n");
             return NULL;
         }
     }
@@ -179,12 +187,10 @@ int setup_connection(uint32_t ip, uint16_t port) {
     if (con->sockfd == -1) {
         DEBUG_PRINT("socket creation failed\n");
     }
-    struct timeval tv;
+    timeval tv;
     tv.tv_sec = 0;
     tv.tv_usec = 10000;
-    if (setsockopt(con->sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
-        perror("Error");
-    }
+    setsockopt(con->sockfd, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv, sizeof(tv));
 
     sockaddr_in server_addr;
     server_addr.sin_family = AF_INET;
@@ -246,9 +252,9 @@ int setup_connection(uint32_t ip, uint16_t port) {
     timer_fds[fdmax].events = POLLIN;    
     struct itimerspec spec;
     spec.it_value.tv_sec = 0;
-    spec.it_value.tv_nsec = 100000000;
+    spec.it_value.tv_nsec = 6000000;
     spec.it_interval.tv_sec = 0;
-    spec.it_interval.tv_nsec = 100000000;
+    spec.it_interval.tv_nsec = 6000000;
     timerfd_settime(timer_fds[fdmax].fd, 0, &spec, NULL);    
     fdmax++;
 
@@ -260,8 +266,8 @@ int setup_connection(uint32_t ip, uint16_t port) {
 void init_sender(int speed, int delay)
 {
     //speed (Mb/s), delay(ms)
-    const int bdp = ((speed * 1000000) / 8 ) * delay / 1000; //bytes
-    window_size = bdp / (int)MAX_SEGMENT_SIZE;
+    const int bdp = ((speed * 1000000.0) / 8.0) * (delay / 1000.0); //bytes
+    window_size = (int)(bdp / MAX_SEGMENT_SIZE);
     if (window_size < 1) window_size = 1;
     else if (window_size > MAX_WINDOW_SIZE) window_size = MAX_WINDOW_SIZE;
 

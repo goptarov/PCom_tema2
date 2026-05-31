@@ -31,7 +31,7 @@ int recv_data(int conn_id, char *buffer, int len)
     //blocking loop (otherwise this will read nothing and return 0 which will uselessly keep looping in server.cpp)
     while (con->recv_buffer_len == 0 && !con->transfer_done) {
         pthread_mutex_unlock(&cons[conn_id]->con_lock);
-        usleep(1000);
+        usleep(100);
         pthread_mutex_lock(&cons[conn_id]->con_lock);
     }
 
@@ -62,7 +62,7 @@ void *receiver_handler(void *arg)
         int conn_id = -1;
         do {
             res = recv_message_or_timeout(segment, MAX_SEGMENT_SIZE, &conn_id);
-        } while(res == -14);
+        } while(res == -14 || cons.find(conn_id) == cons.end());
 
         pthread_mutex_lock(&cons[conn_id]->con_lock);
 
@@ -161,12 +161,6 @@ int wait4connect(uint32_t ip, uint16_t port)
         DEBUG_PRINT("Couldn't create client socket\n");
         exit(-1);
     }
-    struct timeval tv;
-    tv.tv_sec = 0;
-    tv.tv_usec = 10000;
-    if (setsockopt(con->sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
-        perror("Error");
-    }
 
     recvfrom(listen_sockfd, buf, sizeof(buf), 0, (sockaddr *)&client_addr, &client_addr_len);
     DEBUG_PRINT("Recieved SYN from %s: %d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
@@ -180,6 +174,11 @@ int wait4connect(uint32_t ip, uint16_t port)
         server_new_addr.sin_port = htons(1024 + rand() % 65411);
         ret = bind(con->sockfd, (sockaddr *)&server_new_addr, sizeof(server_new_addr));
     } while (ret == -1); //repeat if the port was already assigned
+
+    timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 10000;
+    setsockopt(con->sockfd, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv, sizeof(tv));
 
     con->servaddr = client_addr;
     con->conn_id = conn_id;
@@ -207,10 +206,23 @@ int wait4connect(uint32_t ip, uint16_t port)
         if (ack->protocol_id == POLI_PROTOCOL_ID && ack->type == ACK) {
             DEBUG_PRINT("Recieved ACK from: %s: %d\n", inet_ntoa(con->servaddr.sin_addr), ntohs(con->servaddr.sin_port));
             break;
-        } else {
-            //Recieved something else
-            DEBUG_PRINT("Received non-ACK, resending SYN+ACK\n");
         }
+
+        auto *segment_hdr = (poli_tcp_data_hdr *)buf;
+        if (segment_hdr->protocol_id == POLI_PROTOCOL_ID && segment_hdr->type == DATA) {
+            //Recieved data -> mark handshake as complete
+            uint16_t seq = ntohs(segment_hdr->seq_num);
+            uint16_t len = ntohs(segment_hdr->len);
+
+            if (seq == con->next_expected_seq && len <= MAX_BUF_SIZE) {
+                memcpy(con->recv_buffer + con->recv_buffer_len, buf + sizeof(poli_tcp_data_hdr), len);
+                con->recv_buffer_len += len;
+                con->next_expected_seq++;
+            }
+            DEBUG_PRINT("Client already transferring. Handshake complete\n");
+            break;
+        }
+        DEBUG_PRINT("Ignoring unexpected segment\n");
     }
 
     pthread_mutex_init(&con->con_lock, NULL);
@@ -227,9 +239,9 @@ int wait4connect(uint32_t ip, uint16_t port)
     timer_fds[fdmax].events = POLLIN;    
     struct itimerspec spec;     
     spec.it_value.tv_sec = 0;
-    spec.it_value.tv_nsec = 100000000;
+    spec.it_value.tv_nsec = 6000000;
     spec.it_interval.tv_sec = 0;
-    spec.it_interval.tv_nsec = 100000000;
+    spec.it_interval.tv_nsec = 6000000;
     timerfd_settime(timer_fds[fdmax].fd, 0, &spec, NULL);    
     fdmax++;
 
